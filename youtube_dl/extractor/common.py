@@ -301,8 +301,9 @@ class InfoExtractor(object):
     There must be a key "entries", which is a list, an iterable, or a PagedList
     object, each element of which is a valid dictionary by this specification.
 
-    Additionally, playlists can have "title", "description" and "id" attributes
-    with the same semantics as videos (see above).
+    Additionally, playlists can have "id", "title", "description", "uploader",
+    "uploader_id", "uploader_url" attributes with the same semantics as videos
+    (see above).
 
 
     _type "multi_video" indicates that there are multiple videos that
@@ -494,6 +495,16 @@ class InfoExtractor(object):
                 self.to_screen('%s' % (note,))
             else:
                 self.to_screen('%s: %s' % (video_id, note))
+
+        # Some sites check X-Forwarded-For HTTP header in order to figure out
+        # the origin of the client behind proxy. This allows bypassing geo
+        # restriction by faking this header's value to IP that belongs to some
+        # geo unrestricted country. We will do so once we encounter any
+        # geo restriction error.
+        if self._x_forwarded_for_ip:
+            if 'X-Forwarded-For' not in headers:
+                headers['X-Forwarded-For'] = self._x_forwarded_for_ip
+
         if isinstance(url_or_request, compat_urllib_request.Request):
             url_or_request = update_Request(
                 url_or_request, data=data, headers=headers, query=query)
@@ -522,15 +533,6 @@ class InfoExtractor(object):
         # Strip hashes from the URL (#1038)
         if isinstance(url_or_request, (compat_str, str)):
             url_or_request = url_or_request.partition('#')[0]
-
-        # Some sites check X-Forwarded-For HTTP header in order to figure out
-        # the origin of the client behind proxy. This allows bypassing geo
-        # restriction by faking this header's value to IP that belongs to some
-        # geo unrestricted country. We will do so once we encounter any
-        # geo restriction error.
-        if self._x_forwarded_for_ip:
-            if 'X-Forwarded-For' not in headers:
-                headers['X-Forwarded-For'] = self._x_forwarded_for_ip
 
         urlh = self._request_webpage(url_or_request, video_id, note, errnote, fatal, data=data, headers=headers, query=query)
         if urlh is False:
@@ -1974,6 +1976,22 @@ class InfoExtractor(object):
                                         'duration': duration,
                                     })
                                     segment_index += 1
+                            representation_ms_info['fragments'] = fragments
+                        elif 'segment_urls' in representation_ms_info:
+                            # Segment URLs with no SegmentTimeline
+                            # Example: https://www.seznam.cz/zpravy/clanek/cesko-zasahne-vitr-o-sile-vichrice-muze-byt-i-zivotu-nebezpecny-39091
+                            # https://github.com/rg3/youtube-dl/pull/14844
+                            fragments = []
+                            segment_duration = float_or_none(
+                                representation_ms_info['segment_duration'],
+                                representation_ms_info['timescale']) if 'segment_duration' in representation_ms_info else None
+                            for segment_url in representation_ms_info['segment_urls']:
+                                fragment = {
+                                    location_key(segment_url): segment_url,
+                                }
+                                if segment_duration:
+                                    fragment['duration'] = segment_duration
+                                fragments.append(fragment)
                             representation_ms_info['fragments'] = fragments
                         # NB: MPD manifest may contain direct URLs to unfragmented media.
                         # No fragments key is present in this case.
